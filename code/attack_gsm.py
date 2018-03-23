@@ -48,7 +48,7 @@ def main(_):
     dy_dx,=tf.gradients(caps_net._loss,caps_net._x);
     x_adv = tf.stop_gradient(caps_net._x +1*eps*tf.sign(dy_dx));
     x_adv = tf.clip_by_value(x_adv, 0., 1.);
-    
+
     with tf.Session(config=config) as sess:
         if ckpt and cfg.USE_CKPT:
             print("Reading parameters from %s" % ckpt.model_checkpoint_path)
@@ -60,7 +60,7 @@ def main(_):
                                          for v in tf.trainable_variables()))
 
         caps_net.train_writer.add_graph(sess.graph)
-   
+
         #caps_net.adv_validation(sess, 'train',x_adv,FLAGS.max_iter)
         #caps_net.adv_validation(sess, 'validation',x_adv,FLAGS.max_iter)
         caps_net.adv_validation(sess, 'test',x_adv,FLAGS.max_iter,"samples/gsm_"+str(FLAGS.max_iter)+"_"+str(FLAGS.max_epsilon)+".PNG")

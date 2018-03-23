@@ -11,6 +11,7 @@ import tensorflow as tf
 from six.moves import xrange
 from tensorflow.contrib import slim
 from tqdm import tqdm
+import pandas as pd
 
 from config import cfg
 
@@ -133,7 +134,7 @@ class CapsNet(object):
         """
         doing dynamic routing with tf.while_loop
         :arg
-            proir: log prior for scaling with shape [10, num_caps]
+            prior: log prior for scaling with shape [10, num_caps]
             cap_prediction: predictions from layer below with shape [None, 10, num_caps, 16]
             num_caps: num_caps
         :return
@@ -157,7 +158,7 @@ class CapsNet(object):
 
             return [i - 1, prior, cap_out]
 
-        condition = lambda i, proir, cap_out: i > 0
+        condition = lambda i, prior, cap_out: i > 0
         _, prior, digit_caps = tf.while_loop(condition, body, [iters, prior, init_cap],
                                              shape_invariants=[iters.get_shape(),
                                                                tf.TensorShape([None, 10, num_caps]),
@@ -169,7 +170,7 @@ class CapsNet(object):
         """
         doing dynamic routing with for loop as static implementation
         :arg
-            proir: log prior for scaling with shape [10, num_caps]
+            prior: log prior for scaling with shape [10, num_caps]
             cap_prediction: predictions from layer below with shape [None, 10, num_caps, 16]
         :return
             digit_caps: digit capsules with shape [None, 10, 16]
@@ -206,7 +207,7 @@ class CapsNet(object):
         # shape [None, 10, 16]
         return digit_caps
 
-    def _reconstruct(self, digit_caps):
+    def _reconstruct(self, digit_caps, y_):
         """
         reconstruct from digit capsules with 3 fully connected layer
         :param
@@ -218,7 +219,7 @@ class CapsNet(object):
         # 1. only use the target capsule with dimension [None, 16] or [16,] (use it for default)
         # 2. use all the capsule, including the masked out ones with lots of zeros
         with tf.name_scope('reconstruct'):
-            y_ = tf.expand_dims(self._y_, axis=2)
+            y_ = tf.expand_dims(y_, axis=2)
             # y_ shape: [None, 10, 1]
 
             # for method 1.
@@ -226,6 +227,8 @@ class CapsNet(object):
             # target_cap shape: [None, 10, 16]
             target_cap = tf.reduce_sum(target_cap, axis=1)
             # target_cap: [None, 16]
+            # normalize target_cap
+            # target_cap = tf.nn.l2_normalize(target_cap, dim=1)
 
             # for method 2.
             # target_cap = tf.reshape(y_ * digit_caps, [-1, 10*16])
@@ -242,6 +245,44 @@ class CapsNet(object):
             # out with shape [None, 784]
 
             return out
+
+    # def _reconstruct_all(self, digit_caps):
+    #     """
+    #     reconstruct from digit capsules with 3 fully connected layer
+    #     :param
+    #         digit_caps: digit capsules with shape [None, 10, 16]
+    #     :return:
+    #         out: out of reconstruction
+    #     """
+    #     # (TODO wu) there is two ways to do reconstruction.
+    #     # 1. only use the target capsule with dimension [None, 16] or [16,] (use it for default)
+    #     # 2. use all the capsule, including the masked out ones with lots of zeros
+    #     with tf.name_scope('reconstruct_all'):
+    #         tf.range(9)
+    #         y_ = tf.expand_dims(y_, axis=2)
+    #         # y_ shape: [None, 10, 1]
+    #
+    #         # for method 1.
+    #         target_cap = y_ * digit_caps
+    #         # target_cap shape: [None, 10, 16]
+    #         target_cap = tf.reduce_sum(target_cap, axis=1)
+    #         # target_cap: [None, 16]
+    #
+    #         # for method 2.
+    #         # target_cap = tf.reshape(y_ * digit_caps, [-1, 10*16])
+    #
+    #         fc = slim.fully_connected(target_cap, 512,
+    #                                   weights_initializer=self._w_initializer)
+    #         fc = slim.fully_connected(fc, 1024,
+    #                                   weights_initializer=self._w_initializer)
+    #         fc = slim.fully_connected(fc, 784,
+    #                                   weights_initializer=self._w_initializer,
+    #                                   activation_fn=None)
+    #         # the last layer with sigmoid activation
+    #         out = tf.sigmoid(fc)
+    #         # out with shape [None, 784]
+    #
+    #         return out
 
     def _add_loss(self, digit_caps):
         """
@@ -277,18 +318,20 @@ class CapsNet(object):
             tf.summary.scalar('neg_loss', neg_loss)
             # neg_loss shape: [None, ]
 
-            reconstruct = self._reconstruct(digit_caps)
+            reconstruct = self._reconstruct(digit_caps, self._y_)
+            # self.reconstruct = self._reconstruct_all(digit_caps)
+            # reconstruct = self.reconstruct[None, tf.argmax(self._y_, 1)]
 
             # loss of reconstruction
             with tf.name_scope('l2_loss'):
                 reconstruct_loss = tf.reduce_sum(tf.square(self._x - reconstruct), axis=-1)
+                #Added by Jaesik Yoon
+                self.reconstruct_loss=reconstruct_loss
                 reconstruct_loss = tf.reduce_mean(reconstruct_loss)
             tf.summary.scalar('reconstruct_loss', reconstruct_loss)
 
             total_loss = pos_loss + neg_loss + \
                          cfg.RECONSTRUCT_W * reconstruct_loss
-            #Added by Jaesik Yoon
-            self.reconstruct_loss=reconstruct_loss;
             tf.summary.scalar('loss', total_loss)
 
         return total_loss
@@ -323,6 +366,8 @@ class CapsNet(object):
                                                              global_step=self._global_step)
             # set up accuracy ops
             self._accuracy()
+            # self._accuracy_with_reconstruction()
+
             self._summary_op = tf.summary.merge_all()
 
             self.saver = tf.train.Saver()
@@ -412,6 +457,28 @@ class CapsNet(object):
             self.accuracy = tf.reduce_mean(correct_prediction)
             tf.summary.scalar('accuracy', self.accuracy)
 
+    # def _accuracy_with_reconstruction(self):
+    #     with tf.name_scope('loss'):
+    #         def reconstruct_loss(y):
+    #             y_ = tf.one_hot(tf.fill([100], y), 10)
+    #             # y_ = tf.Print(y_, [y_[0]])
+    #
+    #             reconstruct = tf.stop_gradient(self._reconstruct(self._digit_caps, y_))
+    #             return reconstruct
+    #             reconstruct_loss = tf.reduce_sum(tf.square(self._x - reconstruct), axis=-1)
+    #             return tf.reduce_mean(reconstruct_loss)
+    #         reconstruct_losses = tf.map_fn(reconstruct_loss, tf.range(10))
+    #         reconstruct_losses = tf.Print(reconstruct_losses, [reconstruct_losses])
+    #         #
+    #         # # digit_caps_norm = tf.norm(self._digit_caps, ord=2, axis=-1)
+    #         # # correct_prediction = tf.equal(tf.argmax(self._y_, 1),
+    #         # #                               tf.argmax(self._digit_caps_norm, 1))
+    #         correct_prediction = tf.equal(tf.argmax(self._y_, 1),
+    #                                       tf.argmin(reconstruct_losses, 1))
+    #         correct_prediction = tf.cast(correct_prediction, tf.float32)
+    #         self.accuracy = tf.reduce_mean(correct_prediction)
+    #         tf.summary.scalar('accuracy', self.accuracy)
+
     def train_with_summary(self, sess, batch_size=100, iters=0):
         batch = self._mnist.train.next_batch(batch_size)
         loss, _, train_acc, train_summary = sess.run([self._loss, self._train_op,
@@ -449,7 +516,7 @@ class CapsNet(object):
         else:
             x = self._mnist.validation.images
             y_ = self._mnist.validation.labels
-       
+
         acc = []
         for i in tqdm(xrange(len(x) // 100), desc="calculating %s accuracy" % set):
             x_i = x[i * 100: (i + 1) * 100]
@@ -460,9 +527,9 @@ class CapsNet(object):
             acc.append(ac)
         all_ac = np.mean(np.array(acc))
         print("whole {} accuracy: {}".format(set, all_ac))
-   
-    # added by Jaesik Yoon 
-    def adv_validation(self, sess, set, x_adv, max_iter,fname=None):
+
+    # added by Jaesik Yoon
+    def adv_validation(self, sess, set, x_adv, max_iter,fname=None,reconstruct=False):
         if set == 'test':
             x = self._mnist.test.images
             y_ = self._mnist.test.labels
@@ -472,21 +539,44 @@ class CapsNet(object):
         if set == 'train':
             x = self._mnist.validation.images
             y_ = self._mnist.validation.labels
-        
+
+        if cfg.SAMPLE_LIMIT:
+            x = x[:cfg.SAMPLE_LIMIT]
+            y_ = y_[:cfg.SAMPLE_LIMIT]
+
         acc = []
         for i in tqdm(xrange(len(x) // 100), desc="calculating %s accuracy" % set):
             x_i = x[i * 100: (i + 1) * 100]
             y_i = y_[i * 100: (i + 1) * 100]
             for j in range(max_iter):
-              x_i=sess.run(x_adv,feed_dict={self._x:x_i,self._y_:y_i});
-            
+              x_i=sess.run(x_adv,feed_dict={self._x:x_i,self._y_:y_i})
+
             # When writing imgs
-            image_save(x_i,fname);
-            return;
-            
-            ac = sess.run(self.accuracy,
-                          feed_dict={self._x: x_i,
-                                     self._y_: y_i})
+            # image_save(x_i,fname)
+            # return
+
+            if reconstruct:
+                def caps_reconstruct_loss(x_i, y):
+                    y_ = np.zeros((1, 10))
+                    y_[0, y] = 1.
+                    y_ = np.repeat(y_, x_i.shape[0], axis=0)
+                    return sess.run(self.reconstruct_loss, feed_dict={
+                        self._x: x_i,
+                        self._y_: y_
+                    })
+
+                reconstruct_losses = np.moveaxis(np.array([caps_reconstruct_loss(x_i, i) for i in range(10)]), 0, -1)
+                # print(caps_reconstruct_loss(x_i[0:5], 0))
+                # print(caps_reconstruct_loss(x_i[0:5], 1))
+                # reconstruct_losses = np.array([caps_reconstruct_loss(x_i, i) for i in range(10)])
+                # print(reconstruct_losses[0:5], y_i[0:5])
+
+                ac = np.equal(reconstruct_losses.argmin(axis=1), y_i.argmax(axis=1)).astype(float).mean()
+            else:
+                ac = sess.run(self.accuracy,
+                              feed_dict={self._x: x_i,
+                                         self._y_: y_i})
+
             acc.append(ac)
         all_ac = np.mean(np.array(acc))
         print("whole {} accuracy: {}".format(set, all_ac))

@@ -62,11 +62,13 @@ __C.PRIOR_TRAINING = False
 __C.USE_CKPT = True
 
 # directory for saving data
-#__C.DATA_DIR = '../data'
-__C.DATA_DIR = '/tmp/tensorflow/mnist/'
+__C.DATA_DIR = '../data'
+# __C.DATA_DIR = '/tmp/tensorflow/mnist/'
 
 # directory for saving check points
-__C.TRAIN_DIR = '/tmp/adv_attack_capsnet/output/output_test'
+__C.TRAIN_DIR = '/Users/colllin/Code/Evergreen.ai/adv_attack_capsnet/output'
 
 # direcotry for saving tensorboard files
-__C.TB_DIR = '/tmp/adv_attack_capsnet/output/tensorboard_test'
+__C.TB_DIR = '/Users/colllin/Code/Evergreen.ai/adv_attack_capsnet/output/tensorboard'
+
+__C.SAMPLE_LIMIT = 1000
